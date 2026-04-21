@@ -31,13 +31,18 @@ MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB per file
 
 app = FastAPI(title="GroundHog RAG API", docs_url=None, redoc_url=None)
 
-# CORS — localhost only
+frontend_origin = os.environ.get("FRONTEND_ORIGIN")
+allowed_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+if frontend_origin:
+    allowed_origins.append(frontend_origin)
+
+# CORS — localhost + optional public frontend origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
