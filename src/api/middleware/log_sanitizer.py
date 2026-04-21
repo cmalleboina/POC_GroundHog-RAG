@@ -70,11 +70,16 @@ class LogSanitizingFilter(logging.Filter):
             # Format the message with args, then sanitize
             try:
                 record.msg = sanitize(record.msg % record.args)
-                record.args = None
+                # Keep args as an empty tuple so logging formatters that
+                # inspect/iterate args (e.g. uvicorn access logger) do not
+                # crash on None.
+                record.args = ()
             except (TypeError, ValueError):
                 record.msg = sanitize(str(record.msg))
+                record.args = ()
         else:
             record.msg = sanitize(str(record.msg))
+            record.args = ()
 
         return True
 

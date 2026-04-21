@@ -274,7 +274,8 @@ def api_upload_documents(files: list) -> dict | None:
         )
 
     try:
-        with httpx.Client(timeout=600.0) as client:
+        # Large PDFs can take a long time to embed/index end-to-end.
+        with httpx.Client(timeout=1800.0) as client:
             resp = client.post(
                 f"{API_URL}/documents/upload",
                 files=multipart_files,
@@ -282,9 +283,18 @@ def api_upload_documents(files: list) -> dict | None:
             )
             if resp.status_code == 200:
                 return resp.json()
-            return None
-    except httpx.RequestError:
-        return None
+            error_text = resp.text.strip()
+            if len(error_text) > 500:
+                error_text = error_text[:500] + "..."
+            return {
+                "results": [],
+                "error": f"Upload API failed ({resp.status_code}): {error_text or 'no response body'}",
+            }
+    except httpx.RequestError as exc:
+        return {
+            "results": [],
+            "error": f"Upload request error: {type(exc).__name__}",
+        }
 
 
 # --- UI: Login ---
@@ -363,6 +373,8 @@ def render_sidebar():
                 if not upload_result:
                     st.error("Upload failed. Please try again.")
                 else:
+                    if upload_result.get("error"):
+                        st.error(upload_result["error"])
                     result_items = upload_result.get("results", [])
                     success_count = 0
                     for item in result_items:
