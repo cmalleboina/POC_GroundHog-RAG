@@ -57,7 +57,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
     networks:
       - rag_net
       - rag_ext
@@ -70,7 +70,7 @@ services:
     depends_on:
       - api
     ports:
-      - "127.0.0.1:3000:3000"
+      - "3000:3000"
     networks:
       - rag_ext
 
