@@ -65,21 +65,24 @@ class LogSanitizingFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # Uvicorn access logger passes a positional args tuple that its
+        # formatter unpacks (client_addr, method, full_path, http_version, status_code).
+        # Mutating msg/args here breaks formatting and triggers logging errors.
+        if record.name == "uvicorn.access":
+            return True
+
         # Sanitize the main message
         if record.args:
             # Format the message with args, then sanitize
             try:
                 record.msg = sanitize(record.msg % record.args)
-                # Keep args as an empty tuple so logging formatters that
-                # inspect/iterate args (e.g. uvicorn access logger) do not
-                # crash on None.
-                record.args = ()
+                record.args = None
             except (TypeError, ValueError):
                 record.msg = sanitize(str(record.msg))
-                record.args = ()
+                record.args = None
         else:
             record.msg = sanitize(str(record.msg))
-            record.args = ()
+            record.args = None
 
         return True
 
