@@ -1,6 +1,8 @@
 import html
+import json
 import re
 import time
+import base64
 
 import httpx
 import streamlit as st
@@ -261,6 +263,30 @@ def api_get_documents() -> list[dict]:
         return []
 
 
+def api_upload_documents(files: list) -> dict | None:
+    if not files:
+        return {"results": []}
+
+    multipart_files = []
+    for file in files:
+        multipart_files.append(
+            ("files", (file.name, file.getvalue(), "application/pdf"))
+        )
+
+    try:
+        with httpx.Client(timeout=600.0) as client:
+            resp = client.post(
+                f"{API_URL}/documents/upload",
+                files=multipart_files,
+                headers=auth_headers(),
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            return None
+    except httpx.RequestError:
+        return None
+
+
 # --- UI: Login ---
 
 def render_login():
@@ -286,9 +312,6 @@ def render_login():
                     st.session_state.token = result["access_token"]
                     st.session_state.username = username
                     st.session_state.login_time = time.time()
-
-                    import json
-                    import base64
 
                     payload_b64 = result["access_token"].split(".")[1]
                     payload_b64 += "=" * (4 - len(payload_b64) % 4)
@@ -321,6 +344,41 @@ def render_sidebar():
                 f'<div class="session-timer">Session expires in {mins}m {secs}s</div>',
                 unsafe_allow_html=True,
             )
+
+        st.divider()
+
+        st.markdown("### Upload PDFs")
+        uploaded_files = st.file_uploader(
+            "Choose PDF documents",
+            type=["pdf"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
+        if st.button("Upload & Index"):
+            if not uploaded_files:
+                st.warning("Please select at least one PDF.")
+            else:
+                with st.spinner("Uploading and indexing documents..."):
+                    upload_result = api_upload_documents(uploaded_files)
+                if not upload_result:
+                    st.error("Upload failed. Please try again.")
+                else:
+                    result_items = upload_result.get("results", [])
+                    success_count = 0
+                    for item in result_items:
+                        status = item.get("status")
+                        if status in ("ingested", "skipped"):
+                            success_count += 1
+                            st.success(
+                                f'{item.get("filename")}: {status} '
+                                f'({item.get("pages", 0)} pages, {item.get("chunks", 0)} chunks)'
+                            )
+                        else:
+                            st.error(
+                                f'{item.get("filename")}: failed - {item.get("detail", "unknown error")}'
+                            )
+                    if success_count:
+                        st.rerun()
 
         st.divider()
 

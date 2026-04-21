@@ -9,10 +9,16 @@ RUN pip install --no-cache-dir \
     "passlib[bcrypt]" \
     "bcrypt<4.1" \
     python-dotenv \
-    httpx
+    httpx \
+    python-multipart \
+    pymupdf \
+    pdfplumber \
+    langchain-text-splitters \
+    tqdm
 
 COPY src/__init__.py src/__init__.py
 COPY src/api/ src/api/
+COPY src/ingestion/ src/ingestion/
 COPY scripts/ scripts/
 
 EXPOSE 8000

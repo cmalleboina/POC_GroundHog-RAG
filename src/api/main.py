@@ -1,8 +1,11 @@
 import logging
+import os
+import tempfile
 import time
 from collections import defaultdict
+from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -12,6 +15,7 @@ from src.api.db import get_connection, put_connection
 from src.api.health import check_health
 from src.api.middleware.log_sanitizer import install_globally
 from src.api.rag import answer
+from src.ingestion.main import process_file
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 RATE_LIMIT_MAX = 30
 RATE_LIMIT_WINDOW = 60  # seconds
+MAX_UPLOAD_FILES = 10
+MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024  # 20 MB per file
 
 app = FastAPI(title="GroundHog RAG API", docs_url=None, redoc_url=None)
 
@@ -154,6 +160,96 @@ def list_documents(user: dict = Depends(get_current_user)):
         }
         for row in rows
     ]
+
+
+@app.post("/documents/upload")
+def upload_documents(
+    files: list[UploadFile] = File(...),
+    user: dict = Depends(get_current_user),
+):
+    _check_rate_limit(user["user_id"])
+
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    if len(files) > MAX_UPLOAD_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files. Maximum allowed is {MAX_UPLOAD_FILES}",
+        )
+
+    results: list[dict] = []
+
+    for upload in files:
+        filename = upload.filename or "uploaded.pdf"
+        if not filename.lower().endswith(".pdf"):
+            results.append(
+                {
+                    "filename": filename,
+                    "status": "failed",
+                    "detail": "Only PDF files are supported",
+                }
+            )
+            continue
+
+        try:
+            file_bytes = upload.file.read()
+        finally:
+            upload.file.close()
+
+        if len(file_bytes) > MAX_UPLOAD_SIZE_BYTES:
+            results.append(
+                {
+                    "filename": filename,
+                    "status": "failed",
+                    "detail": f"File too large. Max size is {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)} MB",
+                }
+            )
+            continue
+
+        safe_name = Path(filename).name
+        suffix = Path(safe_name).suffix or ".pdf"
+        temp_path: str | None = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                delete=False,
+                suffix=suffix,
+                prefix="upload_",
+                dir=tempfile.gettempdir(),
+            ) as tmp:
+                tmp.write(file_bytes)
+                temp_path = tmp.name
+
+            ingest_result = process_file(
+                Path(temp_path),
+                dry_run=False,
+                reindex=False,
+                access_group=user["access_group"] or "default",
+            )
+
+            results.append(
+                {
+                    "filename": filename,
+                    "status": ingest_result["status"],
+                    "pages": ingest_result.get("pages", 0),
+                    "chunks": ingest_result.get("chunks", 0),
+                }
+            )
+        except Exception as exc:
+            logger.error("Upload ingestion failed for %s", filename, exc_info=True)
+            results.append(
+                {
+                    "filename": filename,
+                    "status": "failed",
+                    "detail": str(exc),
+                }
+            )
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    return {"results": results}
 
 
 @app.get("/sources/{chunk_id}")
